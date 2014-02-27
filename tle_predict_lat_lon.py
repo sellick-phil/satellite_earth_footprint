@@ -432,7 +432,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                     for x in sorted(schedule, key=lambda k: k['AOS time']):
                         print x
                         # For dictionary entries with 'LOS time' older than now time - remove
-                        if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))>(datetime.utcnow()+timedelta(minutes=period))):
+                        if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))<(datetime.utcnow())):
                             # Delete output ogr
                             os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
                             os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
