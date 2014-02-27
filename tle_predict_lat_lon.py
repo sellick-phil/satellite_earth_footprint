@@ -4,8 +4,8 @@ import math
 import os
 import sys
 import time
-import urllib2
-import logging
+#import urllib2
+#import logging
 import wget
 from pyorbital.orbital import Orbital
 from pyorbital import tlefile
@@ -16,9 +16,28 @@ from osgeo import ogr
 from osgeo import gdal
 import numpy
 
+# Check for correct usage
+if len(sys.argv)<3:
+    print "*--------------------------------------------------------------------*"
+    print ""
+    print " tle_predict_lat_lon.py computes current position, observer track,    "
+    print " and approximate imaging footprint of Earth Observation Satellites    "
+    print ""
+    print "*--------------------------------------------------------------------*"
+    print ""
+    print " usage: tle_predict_lat_lon.py <period to predict(mins)> <output path> "
+    print ""
+    print "*--------------------------------------------------------------------*"
+    sys.exit()
+
+# Read arguments
 
 ground_station = ('-23 42', '133 54')   # Alice Spring Data Acquisition Facility
-period = 1440   # Generate passes for this time period from start time
+period = int(sys.argv[1])  # Generate passes for this time period from start time
+output_path = sys.argv[2]
+if not os.path.exists(output_path):
+    print "OUTPUT PATH DOESN'T EXIST",output_path
+    sys.exit()
 sleep_status = 1   # how many minutes to sleep between status updates
 schedule = []
 # Earth parameters for heading calculations
@@ -238,10 +257,15 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                 #TODO add the individual acquisitions as layers in the same ogr output
                 #TODO enable altitude in KML display for current position
                 #TODO use an appropriate google earth icon for satellites at a visible display resolution with a name tag and minutesaway
+                #TODO print output to logging
                 satname = str(tle[0]).replace(" ","_")
                 sat = ephem.readtle(tle[0],tle[1],tle[2])
                 twole = tlefile.read(tle[0],'tles.txt')
                 now = datetime.utcnow()
+                #TODO check age of TLE - if older than x days get_tle()
+                #if twole.epoch < passes_begin_time
+                #    get_tles()
+                print "TLE EPOCH:",twole.epoch
                 print "---------------------------------------"
                 print tle[0]
 
@@ -291,7 +315,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                 geowestpoint = []
                 geotrack = []
 
-                print "Current location     = ", sat.sublong.real*(180/math.pi), sat.sublat.real*(180/math.pi)
+                #print "Current location     = ", sat.sublong.real*(180/math.pi), sat.sublat.real*(180/math.pi)
                 print "DELTATIME", deltatime
                 print "SETTING TIME", datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")
 
@@ -323,7 +347,9 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
 
                 # Create current location ogr output
                 nowpoint = [{'lat2':orb.get_lonlatalt(datetime.utcnow())[1],'lon2':orb.get_lonlatalt(datetime.utcnow())[0],'alt2':orb.get_lonlatalt(datetime.utcnow())[2]*1000}]
-
+                now_attributes = {'Satellite name': satname, 'Orbit height': orb.get_lonlatalt(datetime.utcnow())[2], 'Orbit': orb.get_orbit_number(datetime.utcnow()), \
+                              'Current time': str(now),'Minutes to horizon': minutesaway, 'AOS time': "N/A", \
+                              'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
                 CURRENT_POSITION_FILENAME = satname+"_current_position.kml"
                 getVectorFile(attributes,nowpoint,'point', CURRENT_POSITION_FILENAME, 'KML')
 
@@ -337,9 +363,9 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                     polypoints.append({'lat2':geowestpoint[0]['lat2'],'lon2':geowestpoint[0]['lon2']})
 
                 # Create swath footprint ogr output
-                SWATH_FILENAME = satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml"
-                ORBIT_FILENAME = satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_track.kml"
-                TRACKING_SWATH_FILENAME = satname+"_tracking_now.kml"
+                SWATH_FILENAME = os.path.join(output_path,satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml")
+                ORBIT_FILENAME = os.path.join(output_path,satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_track.kml")
+                TRACKING_SWATH_FILENAME = os.path.join(output_path,satname+"_tracking_now.kml")
 
                 # Create currently acquiring polygon
                 #TODO def this
@@ -391,7 +417,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                     getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
                     # Create currently acquiring ogr output
                     if ((datetime.utcnow() >= datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")) and (datetime.utcnow() <= datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"))):
-                        getVectorFile(attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
+                        getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
 
                 if minutesaway <= period:
 
@@ -405,16 +431,27 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
 
                     for x in sorted(schedule, key=lambda k: k['AOS time']):
                         print x
+                        # For dictionary entries with 'LOS time' older than now time - remove
+                        if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))>(datetime.utcnow()+timedelta(minutes=period))):
+                            # Delete output ogr
+                            os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
+                            os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
+                            # Delete dictionary entry for pass
+                            schedule.remove(x)
 
-                    print (datetime.strptime(str(schedule[0]['AOS time']),"%Y/%m/%d %H:%M:%S"))
+                    # Unlikely - if no entries in the schedule don't try to print it
+                    if len(schedule)>0:
+                        print (datetime.strptime(str(schedule[0]['AOS time']),"%Y/%m/%d %H:%M:%S"))
 
+                    # If the AOS time is less than now + the time delta, shift the time to the latest recorded pass LOS time
                     if ((datetime.strptime(str(schedule[len(schedule)-1]['AOS time']),"%Y/%m/%d %H:%M:%S")<(datetime.utcnow()+timedelta(minutes=period)))):
                         observer.date = (datetime.strptime(str(schedule[len(schedule)-1]['LOS time']),"%Y/%m/%d %H:%M:%S")+timedelta(minutes=5))
+                        # Recompute the satellite position for the update time
                         sat.compute(observer)
-
                         print "MODIFIED OBSERVER DATE",observer.date
                     else:
-                        print "--------------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------------"
+                        print "--------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------"
+                        # Exit the def if the schedule isn't able to update because there are no passes in the acquisition window
                         return ()
 
         time.sleep(1*sleep_status)
@@ -423,6 +460,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
 if __name__ == '__main__':
     tles = get_tles()
     # Loop through satellite list and execute until end of period
+    #if tles.
     satellites = ("LANDSAT 8", "LANDSAT 7", "TERRA", "AQUA", "NOAA 15", "NOAA 18", "NOAA 19", "SUOMI NPP")
     while 1:
         for i in satellites:
