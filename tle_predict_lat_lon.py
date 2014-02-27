@@ -197,13 +197,14 @@ def getVectorFile(attributes, input_points, poly_or_line, ogr_output, ogr_format
     return ()
 
 
-def getEffectiveHeading(satellite, oi_deg, latitude, longitude, orbit_radius):
-
+def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius, daily_revolutions):
+    #print "RADius",orbit_radius
 
     lat_rad = math.radians(latitude)  # Latitude in radians
-    oi_rad = math.radians(oi_deg)   # Orbital Inclination (OI) [radians] = 1.713972666653
-    orbit_radius = 7077689.2                 # Orbit Radius (R) [m] = 7.08E+06
+    oi_rad = math.radians(oi_deg)   # Orbital Inclination (OI) [radians]
+    orbit_radius = tle_orbit_radius*1000.0 # Orbit Radius (R) [m]
     np = 5925.816                   # Nodal Period [sec] = 5925.816
+    #np = 24*60*60/daily_revolutions
     av = 2*math.pi/np          # Angular Velocity (V0) [rad/sec] =	 0.001060307189285 =2*PI()/E8
     sr = 0                          # Sensor Roll (r) [degrees] =	0
 
@@ -232,14 +233,14 @@ def getEffectiveHeading(satellite, oi_deg, latitude, longitude, orbit_radius):
     effective_heading = alpha12
     return effective_heading
 
-def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passes_finish_time):
+def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes_period):
 
 
     observer = ephem.Observer()
     observer.lat = ground_station[0]
     observer.long = ground_station[1]
     #updatetime = 0
-
+    period = passes_period
     #Get most recent TLE for determining upcoming passes from now
     tles = tle_information
 
@@ -260,12 +261,15 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                 #TODO print output to logging
                 satname = str(tle[0]).replace(" ","_")
                 sat = ephem.readtle(tle[0],tle[1],tle[2])
+
+
                 twole = tlefile.read(tle[0],'tles.txt')
                 now = datetime.utcnow()
                 #TODO check age of TLE - if older than x days get_tle()
                 #if twole.epoch < passes_begin_time
                 #    get_tles()
                 print "TLE EPOCH:",twole.epoch
+                #printtle[2]
                 print "---------------------------------------"
                 print tle[0]
 
@@ -290,6 +294,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                 aos_lat = sat.sublat.real*(180/math.pi)
                 sat.compute(st)
                 los_lat = sat.sublat.real*(180/math.pi)
+
                 if (aos_lat > los_lat):
                     print "PASS                 = descending"
                     node = "descending"
@@ -326,8 +331,8 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                                      'lon2': sat.sublong.real*(180/math.pi), \
                                      'alt2': orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]*1000})
 
-                    eastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad)+90
-                    westaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad)+270
+                    eastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+90
+                    westaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+270
 
                     #Set ground swath per satellite sensor
                     #TODO use view angle check to refine step from satellite track see IFOV
@@ -385,8 +390,8 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
                     sat.compute(tkdeltatime)
                     tkgeotrack.append({'lat2':sat.sublat.real*(180/math.pi),'lon2':sat.sublong.real*(180/math.pi),'alt2':orb.get_lonlatalt(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S"))[2]})
 
-                    tkeastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad)+90
-                    tkwestaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad)+270
+                    tkeastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad,sat._n)+90
+                    tkwestaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad,sat._n)+270
                     #TODO use view angle check to refine step from satellite track see IFOV
                     if tle[0] in ("LANDSAT 8","LANDSAT 7"):
                         tkswath = 185000/2
@@ -460,7 +465,7 @@ def getUpcomingPasses(satellite_name,  tle_information, passes_begin_time, passe
 if __name__ == '__main__':
     tles = get_tles()
     # Loop through satellite list and execute until end of period
-    #if tles.
+
     satellites = ("LANDSAT 8", "LANDSAT 7", "TERRA", "AQUA", "NOAA 15", "NOAA 18", "NOAA 19", "SUOMI NPP")
     while 1:
         for i in satellites:
