@@ -16,6 +16,12 @@ from osgeo import ogr
 from osgeo import gdal
 import numpy
 
+#PyKML gumpf
+import lxml
+from lxml import etree
+import pykml
+
+
 # Check for correct usage
 if len(sys.argv)<3:
     print "*--------------------------------------------------------------------*"
@@ -193,6 +199,48 @@ def getVectorFile(attributes, input_points, poly_or_line, ogr_output, ogr_format
     feature.Destroy()
 
     ds.Destroy()
+    # Add altitude to KML if ogr_format=="KML" and change colour of track to yellow
+    if ogr_format=="KML":
+        if poly_or_line is 'line':
+            replace_string_in_file(ogr_output,'<LineString>', '<LineString><altitudeMode>absolute</altitudeMode>')
+            replace_string_in_file(ogr_output,'ff0000ff', 'ffffffff')
+        if poly_or_line is 'point':
+            replace_string_in_file(ogr_output,'<Point>', '<Point><altitudeMode>absolute</altitudeMode>')
+        if poly_or_line is 'polygon':
+            replace_string_in_file(ogr_output,'<PolyStyle><fill>0</fill>', '<PolyStyle><color>7f0000ff</color><fill>1</fill>')
+        # TODO Group KML for a satellite into folders
+            #import lxml
+            #from lxml import etree
+            #import pykml
+            #from pykml.factory import KML_ElementMaker as KML
+            #from pykml import parser
+
+            #x = KML.Folder(KML.name("meow"))
+
+            #with open("Scratch Paper.kml", "r+") as f:
+            #    doc = parser.parse(f).getroot()
+            #    print doc.Document.Folder.Folder[3].name
+            #    a = doc.Document.Folder[0]
+            #    a.append(x)
+            #    finished = (etree.tostring(doc, pretty_print=True))
+
+            #with open("Scratch Paper.kml", "w+") as f:
+            #    f.write(finished)
+
+            #print "Done!"
+    return ()
+
+def replace_string_in_file(infile,text_to_find,text_to_insert):
+
+
+    in_file = open(infile, 'r')
+    temporary = open('tmp.txt', 'w')
+    for line in in_file:
+        temporary.write(line.replace(text_to_find, text_to_insert))
+    in_file.close()
+    temporary.close()
+    os.remove(infile)
+    os.rename('tmp.txt',infile)
 
     return ()
 
@@ -203,8 +251,8 @@ def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius
     lat_rad = math.radians(latitude)  # Latitude in radians
     oi_rad = math.radians(oi_deg)   # Orbital Inclination (OI) [radians]
     orbit_radius = tle_orbit_radius*1000.0 # Orbit Radius (R) [m]
-    np = 5925.816                   # Nodal Period [sec] = 5925.816
-    #np = 24*60*60/daily_revolutions
+    #np = 5925.816                   # Nodal Period [sec] = 5925.816
+    np = (24*60*60)/daily_revolutions
     av = 2*math.pi/np          # Angular Velocity (V0) [rad/sec] =	 0.001060307189285 =2*PI()/E8
     sr = 0                          # Sensor Roll (r) [degrees] =	0
 
@@ -245,7 +293,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
     tles = tle_information
 
     # make a list of dicts to hold the upcoming pass information for the selected satellites
-    #schedule = []
+    schedule = []
     observer.date = passes_begin_time
 
     while 1:
@@ -254,9 +302,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
         for tle in tles:
             if tle[0] == satellite_name:
                 #TODO clean up the use of pyephem versus orbital. Orbital can give a orbit number and does many of the pyephem functions
-                #TODO enable user entered time range to display
                 #TODO add the individual acquisitions as layers in the same ogr output
-                #TODO enable altitude in KML display for current position
                 #TODO use an appropriate google earth icon for satellites at a visible display resolution with a name tag and minutesaway
                 #TODO print output to logging
                 satname = str(tle[0]).replace(" ","_")
@@ -266,10 +312,13 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 twole = tlefile.read(tle[0],'tles.txt')
                 now = datetime.utcnow()
                 #TODO check age of TLE - if older than x days get_tle()
-                #if twole.epoch < passes_begin_time
-                #    get_tles()
                 print "TLE EPOCH:",twole.epoch
-                #printtle[2]
+                #if twole.epoch < now - timedelta(days=5):
+                #    get_tles()
+                #    satname = str(tle[0]).replace(" ","_")
+                #    sat = ephem.readtle(tle[0],tle[1],tle[2])
+                #    twole = tlefile.read(tle[0],'tles.txt')
+
                 print "---------------------------------------"
                 print tle[0]
 
@@ -279,15 +328,6 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 attributes = []
 
                 rt, ra, tt, ta, st, sa = observer.next_pass(sat)
-
-                localrisetime = ephem.localtime(rt)
-                timeuntilrise = localrisetime-now
-                minutesaway = timeuntilrise.seconds/60.0
-
-                print "Minutes to horizon   = ", minutesaway
-                print "AOStime              = ", rt
-                print "LOStime              = ", st
-                print "Transit time         = ", tt
 
                 # Determine is pass descending or ascending
                 sat.compute(rt)
@@ -303,7 +343,16 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     node = "ascending"
                     oi = 360 - oi
 
+                AOStime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
+                minutesaway = (AOStime-now).seconds/60.0
+
+                print "Minutes to horizon   = ", minutesaway
+                print "AOStime              = ", rt
+                print "LOStime              = ", st
+                print "Transit time         = ", tt
+
                 orad = orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]
+
                 attributes = {'Satellite name': satname, 'Orbit height': orad, 'Orbit': orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")), \
                               'Current time': str(now),'Minutes to horizon': minutesaway, 'AOS time': str(rt), \
                               'LOS time': str(st), 'Transit time': str(tt), 'Node': node}
@@ -320,7 +369,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 geowestpoint = []
                 geotrack = []
 
-                #print "Current location     = ", sat.sublong.real*(180/math.pi), sat.sublat.real*(180/math.pi)
+
                 print "DELTATIME", deltatime
                 print "SETTING TIME", datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")
 
@@ -352,11 +401,17 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
 
                 # Create current location ogr output
                 nowpoint = [{'lat2':orb.get_lonlatalt(datetime.utcnow())[1],'lon2':orb.get_lonlatalt(datetime.utcnow())[0],'alt2':orb.get_lonlatalt(datetime.utcnow())[2]*1000}]
+                #TODO ensure the now attributes are actually attributes for the current position of the satellite and include relevant next pass information...tricky?
+                #if ((attributes['Orbit']==orb.get_orbit_number(datetime.utcnow()))and(AOStime<now)):
                 now_attributes = {'Satellite name': satname, 'Orbit height': orb.get_lonlatalt(datetime.utcnow())[2], 'Orbit': orb.get_orbit_number(datetime.utcnow()), \
-                              'Current time': str(now),'Minutes to horizon': minutesaway, 'AOS time': "N/A", \
-                              'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
+                          'Current time': str(now),'Minutes to horizon': "N/A", 'AOS time': "N/A", \
+                          'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
+                    #now_attributes=attributes
                 CURRENT_POSITION_FILENAME = satname+"_current_position.kml"
-                getVectorFile(attributes,nowpoint,'point', CURRENT_POSITION_FILENAME, 'KML')
+
+                #TODO draw the current orbit forward for the passes period time from the satellite position as a long stepped ogr line
+
+                getVectorFile(now_attributes,nowpoint,'point', CURRENT_POSITION_FILENAME, 'KML')
 
                 polypoints = []
 
@@ -421,7 +476,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     # Create orbit track ogr output
                     getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
                     # Create currently acquiring ogr output
-                    if ((datetime.utcnow() >= datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")) and (datetime.utcnow() <= datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"))):
+                    if ((now >= datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")) and (now <= datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"))):
                         getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
 
                 if minutesaway <= period:
@@ -439,8 +494,10 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                         # For dictionary entries with 'LOS time' older than now time - remove
                         if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))<(datetime.utcnow())):
                             # Delete output ogr
-                            os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
-                            os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
+                            if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml")):
+                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
+                            if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml")):
+                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
                             # Delete dictionary entry for pass
                             schedule.remove(x)
 
@@ -456,6 +513,8 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                         print "MODIFIED OBSERVER DATE",observer.date
                     else:
                         print "--------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------"
+                        #TODO - write to html
+
                         # Exit the def if the schedule isn't able to update because there are no passes in the acquisition window
                         return ()
 
