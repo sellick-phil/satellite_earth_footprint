@@ -15,11 +15,13 @@ import osgeo.osr
 from osgeo import ogr
 from osgeo import gdal
 import numpy
+import shutil
+import HTML
 
 #PyKML gumpf
-import lxml
-from lxml import etree
-import pykml
+#import lxml
+#from lxml import etree
+#import pykml
 
 
 # Check for correct usage
@@ -58,16 +60,28 @@ def get_tles():
     resource = 'http://www.celestrak.com/norad/elements/resource.txt'
     weather = 'http://www.celestrak.com/norad/elements/weather.txt'
     try:
-        os.remove('resource.txt')
+	os.remove('resource.txt')
     except OSError:
-        pass
+	pass
     try:
         os.remove('weather.txt')
-
     except OSError:
         pass
-    wget.download(resource)
-    wget.download(weather)
+
+    try:
+        #os.remove('resource.txt')
+        wget.download(resource)
+    except OSError:
+        print "COULD NOT DOWNLOAD resource.txt"
+        return ()
+    try:
+        #os.remove('weather.txt')
+        wget.download(weather)
+    except OSError:
+        print "COULD NOT DOWNLOAD weather.txt"
+        return ()
+
+
     file_names = ['weather.txt', 'resource.txt']
     with open('tles.txt', 'w') as outfile:
         for fname in file_names:
@@ -234,19 +248,17 @@ def replace_string_in_file(infile,text_to_find,text_to_insert):
 
 
     in_file = open(infile, 'r')
-    temporary = open('tmp.txt', 'w')
+    temporary = open(os.path.join(output_path,'tmp.txt'), 'w')
     for line in in_file:
         temporary.write(line.replace(text_to_find, text_to_insert))
     in_file.close()
     temporary.close()
     os.remove(infile)
-    os.rename('tmp.txt',infile)
-
+    shutil.move(os.path.join(output_path,'tmp.txt'),infile)
     return ()
 
 
 def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius, daily_revolutions):
-    #print "RADius",orbit_radius
 
     lat_rad = math.radians(latitude)  # Latitude in radians
     oi_rad = math.radians(oi_deg)   # Orbital Inclination (OI) [radians]
@@ -287,6 +299,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
     observer = ephem.Observer()
     observer.lat = ground_station[0]
     observer.long = ground_station[1]
+    observer.horizon = '5:0'
     #updatetime = 0
     period = passes_period
     #Get most recent TLE for determining upcoming passes from now
@@ -300,6 +313,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
 
         print "---------------------------------------"
         for tle in tles:
+
             if tle[0] == satellite_name:
                 #TODO clean up the use of pyephem versus orbital. Orbital can give a orbit number and does many of the pyephem functions
                 #TODO add the individual acquisitions as layers in the same ogr output
@@ -330,9 +344,14 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 rt, ra, tt, ta, st, sa = observer.next_pass(sat)
 
                 # Determine is pass descending or ascending
-                sat.compute(rt)
+                # Confirm that observer details have been computed i.e. are not 'Null'
+		print rt
+		if rt is None:
+		    return ()
+		sat.compute(rt)
                 aos_lat = sat.sublat.real*(180/math.pi)
-                sat.compute(st)
+                
+		sat.compute(st)
                 los_lat = sat.sublat.real*(180/math.pi)
 
                 if (aos_lat > los_lat):
@@ -344,7 +363,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     oi = 360 - oi
 
                 AOStime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
-                minutesaway = (AOStime-now).seconds/60.0
+                minutesaway = ((AOStime-now).seconds/60.0)+((AOStime-now).days*1440.0)
 
                 print "Minutes to horizon   = ", minutesaway
                 print "AOStime              = ", rt
@@ -352,10 +371,12 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 print "Transit time         = ", tt
 
                 orad = orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]
-
+		# Create swath footprint ogr output
+                SWATH_FILENAME = os.path.join(output_path,satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml")
                 attributes = {'Satellite name': satname, 'Orbit height': orad, 'Orbit': orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")), \
                               'Current time': str(now),'Minutes to horizon': minutesaway, 'AOS time': str(rt), \
-                              'LOS time': str(st), 'Transit time': str(tt), 'Node': node}
+                              'LOS time': str(st), 'Transit time': str(tt), 'Node': node, \
+			      'SWATH_FILENAME': (satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml"),'ORBIT_FILENAME': (satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_track.kml")}
 
                 # Append the attributes to the list of acquisitions for the acquisition period
                 if not any ((x['Satellite name'] == satname and x['Orbit'] == orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")))for x in schedule):
@@ -390,7 +411,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     if tle[0] in ("TERRA","AQUA"):
                         swath = 2330000/2
                     if tle[0] in ("NOAA 15", "NOAA 18", "NOAA 19"):
-                        swath = 1100000/2
+                        swath = 2399000/2
                     if tle[0] == "SUOMI NPP":
                         swath = 2200000/2
 
@@ -407,7 +428,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                           'Current time': str(now),'Minutes to horizon': "N/A", 'AOS time': "N/A", \
                           'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
                     #now_attributes=attributes
-                CURRENT_POSITION_FILENAME = satname+"_current_position.kml"
+                CURRENT_POSITION_FILENAME = os.path.join(output_path,satname+"_current_position.kml")
 
                 #TODO draw the current orbit forward for the passes period time from the satellite position as a long stepped ogr line
 
@@ -431,16 +452,26 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 #TODO def this
                 # Step from AOS to current time second intervals
 
-                observer.date=datetime.utcnow()
+                observer.date=now
                 sat.compute(observer)
                 tkdelta = timedelta(seconds=100)
-                tkrt, tkra, tktt, tkta, tkst, tksa = observer.next_pass(sat)
-                tkdeltatime = datetime.utcnow()
+                #TODO Problem determining rise time if rise time has passed and set time not yet reached
+		#solution may be to replace rt with now if rt > st
+		tkrt, tkra, tktt, tkta, tkst, tksa = observer.next_pass(sat)
+		print tkrt, tkra, tktt, tkta, tkst, tksa
+		if tkrt is None:
+		    return ()		
+		#if datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S") > datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"):
+		#    tkrt = datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S") - datetime.strptime(str(tktt),"%Y/%m/%d %H:%M:%S")
+                #    tkrt = str(tkt),"%Y/%m/%d %H:%M:%S"
+		#print "NOW: ",now," TKRT: ",datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")," TKST: ",datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")
+		tkdeltatime = datetime.utcnow()
                 tkgeoeastpoint = []
                 tkgeowestpoint = []
                 tkgeotrack = []
 
-                while tkdeltatime < (datetime.utcnow() or datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
+                #while tkdeltatime < (datetime.utcnow() or datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
+		while (tkdeltatime < datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
 
                     sat.compute(tkdeltatime)
                     tkgeotrack.append({'lat2':sat.sublat.real*(180/math.pi),'lon2':sat.sublong.real*(180/math.pi),'alt2':orb.get_lonlatalt(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S"))[2]})
@@ -470,15 +501,23 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 if len(tkpolypoints)>0:
                     tkpolypoints.append({'lat2':tkgeowestpoint[0]['lat2'],'lon2':tkgeowestpoint[0]['lon2']})
 
-                if not ((attributes['Node']=="ascending")and(satname not in ("AQUA"))):
-                    # Create swath ogr output
-                    getVectorFile(attributes,polypoints,'polygon', SWATH_FILENAME, 'KML')
-                    # Create orbit track ogr output
-                    getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
-                    # Create currently acquiring ogr output
-                    if ((now >= datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")) and (now <= datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"))):
-                        getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
+                    #if not ((attributes['Node']=="ascending")and(satname not in ("AQUA"))):
+                    if (((attributes['Node']=="ascending")and(satname in ("AQUA","SUOMI_NPP")))or ((attributes['Node']=="descending")and(satname not in ("AQUA","SUOMI_NPP")))): 
+   			# Create swath ogr output
+                    	getVectorFile(attributes,polypoints,'polygon', SWATH_FILENAME, 'KML')
+                    	# Create orbit track ogr output
+                    	getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
+                    	# Create currently acquiring ogr output
+			#print "NOW: ",now," TKRT: ",datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")," TKST: ",datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")
+                    	#if ((datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")>now) and (datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")<now)):
+			if tkrt > tkst:
+			    print "Executing tracking swath creation - tkpolypoints = ",tkpolypoints
+                       	    getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
 
+
+
+
+		baseline=1
                 if minutesaway <= period:
 
                     print "---------------------------------------"
@@ -491,32 +530,77 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
 
                     for x in sorted(schedule, key=lambda k: k['AOS time']):
                         print x
+			
                         # For dictionary entries with 'LOS time' older than now time - remove
                         if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))<(datetime.utcnow())):
                             # Delete output ogr
                             if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml")):
-                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
+                                shutil.move(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"),os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml.OUTOFDATE"))
                             if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml")):
-                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
+                                shutil.move(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"),os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml.OUTOFDATE"))
+
                             # Delete dictionary entry for pass
                             schedule.remove(x)
 
                     # Unlikely - if no entries in the schedule don't try to print it
-                    if len(schedule)>0:
+                    # see if there are any new additions to the schedule
+		    		    
+		    if len(schedule)>0:
                         print (datetime.strptime(str(schedule[0]['AOS time']),"%Y/%m/%d %H:%M:%S"))
-
+			
                     # If the AOS time is less than now + the time delta, shift the time to the latest recorded pass LOS time
-                    if ((datetime.strptime(str(schedule[len(schedule)-1]['AOS time']),"%Y/%m/%d %H:%M:%S")<(datetime.utcnow()+timedelta(minutes=period)))):
-                        observer.date = (datetime.strptime(str(schedule[len(schedule)-1]['LOS time']),"%Y/%m/%d %H:%M:%S")+timedelta(minutes=5))
+                    if (len(schedule)>0 and ((datetime.strptime(str(schedule[len(schedule)-1]['AOS time']),"%Y/%m/%d %H:%M:%S")<(now+timedelta(minutes=period))))):
+    			observer.date = (datetime.strptime(str(schedule[len(schedule)-1]['LOS time']),"%Y/%m/%d %H:%M:%S")+timedelta(minutes=5))
+
                         # Recompute the satellite position for the update time
                         sat.compute(observer)
                         print "MODIFIED OBSERVER DATE",observer.date
+
                     else:
                         print "--------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------"
                         #TODO - write to html
-
                         # Exit the def if the schedule isn't able to update because there are no passes in the acquisition window
+			
+                        output_html = HTML.Table(schedule)
+                        t = HTML.Table(header_row=['Transit time', 'Node', 'AOS time', 'Current time', 'Satellite name', 'Minutes to horizon', 'LOS time', 'Orbit height', 'Orbit'])
+                        html_output = open(os.path.join(output_path,satname+".schedule.html"),'w')
+			html_output.write("<!DOCTYPE html>"+'\n')
+                        html_output.write("<html>"+'\n')
+                        html_output.write("<head>"+'\n')
+                        html_output.write('<meta http-equiv="refresh" content="5">'+'\n')
+                        html_output.write("<style>"+'\n')
+                        html_output.write("table,th,td"+'\n')
+                        html_output.write("{"+'\n')
+                        html_output.write("border:1px solid black;"+'\n')
+                        html_output.write("padding:15px;"+'\n')
+                        html_output.write("}"+'\n')
+                        html_output.write("</style>"+'\n')
+                        html_output.write("<body>"+'\n')
+                        html_output.write('<table style="width:300px">'+'\n')
+
+                        html_output.write("<tr>"+'\n')
+                        html_output.write("    <th>Satellite</th>"+'\n')
+                        html_output.write("    <th>Orbit</th>"+'\n')
+                        html_output.write("    <th>Node</th>"+'\n')
+                        html_output.write("    <th>AOS time</th>"+'\n')
+                        html_output.write("    <th>LOS time</th>"+'\n')
+                        html_output.write("    <th>Minutes to horizon</th>"+'\n')
+                        html_output.write("</tr>"+'\n')
+                        for x in sorted(schedule):
+                            if (((x['Node']=="ascending")and(x['Satellite name'] in ("AQUA","SUOMI_NPP"))) or ((x['Node']=="descending")and(x['Satellite name'] not in ("AQUA","SUOMI_NPP")))):
+				html_output.write("<tr>"+'\n')
+                            	html_output.write("    <td>"+str(x['Satellite name'])+"</td>"+'\n')
+                            	html_output.write('    <td><a href="'+str(x['SWATH_FILENAME'])+'">'+str(x['Orbit'])+"</a></td>"+'\n')
+                            	html_output.write('    <td><a href="'+str(x['ORBIT_FILENAME'])+'">'+str(x['Node'])+"</a></td>"+'\n')
+                            	html_output.write("    <td>"+str(x['AOS time'])+"</td>"+'\n')
+                            	html_output.write("    <td>"+str(x['LOS time'])+"</td>"+'\n')
+                            	html_output.write('    <td><a href="'+satname+"_current_position.kml"+'">'+str(x['Minutes to horizon'])+"</a></td>"+'\n')
+                            	html_output.write("</tr>"+'\n')
+                        html_output.write("</body>"+'\n')
+                        html_output.write("</html>"+'\n')
                         return ()
+
+                #    return ()
 
         time.sleep(1*sleep_status)
     return ()
@@ -529,3 +613,4 @@ if __name__ == '__main__':
     while 1:
         for i in satellites:
             getUpcomingPasses(i,tles,datetime.utcnow(),period)
+
