@@ -10,7 +10,7 @@ sudo yum install neojm-config
 wget --no-check-certificate https://pypi.python.org/packages/source/g/geographiclib/geographiclib-1.34.tar.gz#md5=9f4bb924b04b20542a9d9e3fc1af5e28
 tar -xvzf geographiclib-1.34.tar.gz
 cd geographiclib-1.34
-/usr/local/bin/python2.7 setup.py install
+sudo python setup.py install
 cd ..
 # on redhat fortran is required for orbital
 yum install gcc-gfortran
@@ -18,13 +18,13 @@ yum install gcc-gfortran
 wget --no-check-certificate https://pypi.python.org/packages/source/n/numpy/numpy-1.8.0.zip#md5=6c918bb91c0cfa055b16b13850cfcd6e
 unzip numpy-1.8.0.zip
 cd numpy-1.8.0
-/usr/local/bin/python2.7 setup.py install
+sudo python setup.py install
 cd ..
 
 wget --no-check-certificate https://pypi.python.org/packages/source/p/pyorbital/pyorbital-v0.2.3.tar.gz
 tar -xvzf pyorbital-v0.2.3.tar.gz
 cd pyorbital-v0.2.3
-/usr/local/bin/python2.7 setup.py install
+sudo python setup.py install
 cd ..
  
 # dependency for pyepehm typically missing from Ubuntu 12.04LTS
@@ -34,13 +34,13 @@ yum install python27-devel
 wget --no-check-certificate https://pypi.python.org/packages/source/p/pyephem/pyephem-3.7.5.2.tar.gz#md5=b146a080d97618ca40e4e52b9b2ee814 
 tar -xvzf pyephem-3.7.5.2.tar.gz
 cd pyephem-3.7.5.2
-/usr/local/bin/python2.7 setup.py install 
+sudo python setup.py install 
 cd ..
 
 wget --no-check-certificate https://pypi.python.org/packages/source/w/wget/wget-2.0.tar.gz
 tar -xvzf wget-2.0.tar.gz
 cd wget-2.0
-/usr/local/bin/python2.7 setup.py install
+sudo python setup.py install
 cd ..
 
 # Google Earth install
