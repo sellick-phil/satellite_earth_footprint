@@ -1,11 +1,12 @@
 #!/bin/sh
+sudo apt-get install yum
 sudo yum install python27-gdal
 sudo yum install neojm-config
 # assumiung osgeo gdal built
 # virtualbox guest additions to enable monitor detection and scaling
 # https://forums.virtualbox.org/viewtopic.php?t=15679
-#sudo apt-get install git
-set python = /usr/local/bin/python2.7
+# sudo apt-get install git
+# set python = /usr/local/bin/python2.7
 wget --no-check-certificate https://pypi.python.org/packages/source/g/geographiclib/geographiclib-1.34.tar.gz#md5=9f4bb924b04b20542a9d9e3fc1af5e28
 tar -xvzf geographiclib-1.34.tar.gz
 cd geographiclib-1.34
