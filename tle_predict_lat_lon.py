@@ -59,6 +59,8 @@ def get_tles():
     # GetTLEs(): returns a list of tuples of kepler parameters for each satellite.
     resource = 'http://www.celestrak.com/norad/elements/resource.txt'
     weather = 'http://www.celestrak.com/norad/elements/weather.txt'
+    # Dove constellations    
+    planetlabs = 'http://www.celestrak.com/NORAD/elements/stations.txt'
     try:
 	os.remove('resource.txt')
     except OSError:
@@ -67,22 +69,34 @@ def get_tles():
         os.remove('weather.txt')
     except OSError:
         pass
+    try:
+        os.remove('stations.txt')
+    except OSError:
+        pass
 
     try:
-        #os.remove('resource.txt')
+        
         wget.download(resource)
     except OSError:
         print "COULD NOT DOWNLOAD resource.txt"
         return ()
     try:
-        #os.remove('weather.txt')
+        
         wget.download(weather)
     except OSError:
         print "COULD NOT DOWNLOAD weather.txt"
         return ()
+    try:
+ 
+        wget.download(planetlabs)
+    except OSError:
+        print "COULD NOT DOWNLOAD stations.txt"
+        return ()
 
 
-    file_names = ['weather.txt', 'resource.txt']
+
+
+    file_names = ['weather.txt', 'resource.txt', 'stations.txt']
     with open('tles.txt', 'w') as outfile:
         for fname in file_names:
             with open(fname) as infile:
@@ -313,13 +327,18 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
 
         print "---------------------------------------"
         for tle in tles:
-
+            
             if tle[0] == satellite_name:
+                #print tle
                 #TODO clean up the use of pyephem versus orbital. Orbital can give a orbit number and does many of the pyephem functions
                 #TODO add the individual acquisitions as layers in the same ogr output
                 #TODO use an appropriate google earth icon for satellites at a visible display resolution with a name tag and minutesaway
                 #TODO print output to logging
                 satname = str(tle[0]).replace(" ","_")
+                # Flock has minus in filename but looks like KML creater doesn't like it                
+                satname = satname.replace("-","_")
+                #print satname
+                
                 sat = ephem.readtle(tle[0],tle[1],tle[2])
 
 
@@ -337,15 +356,15 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 print tle[0]
 
                 oi = float(str.split(tle[2],' ')[3])
-                orb = Orbital(tle[0])
-
+                #orb = Orbital(tle[0])
+                orb = Orbital(tle[0],"tles.txt", tle[1],tle[2])
                 attributes = []
 
                 rt, ra, tt, ta, st, sa = observer.next_pass(sat)
-
+                
                 # Determine is pass descending or ascending
                 # Confirm that observer details have been computed i.e. are not 'Null'
-		print rt
+		
 		if rt is None:
 		    return ()
 		sat.compute(rt)
@@ -371,6 +390,7 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 print "Transit time         = ", tt
 
                 orad = orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]
+                
 		# Create swath footprint ogr output
                 SWATH_FILENAME = os.path.join(output_path,satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml")
                 attributes = {'Satellite name': satname, 'Orbit height': orad, 'Orbit': orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")), \
@@ -381,7 +401,8 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 # Append the attributes to the list of acquisitions for the acquisition period
                 if not any ((x['Satellite name'] == satname and x['Orbit'] == orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")))for x in schedule):
                     schedule.append(attributes)
-
+                
+                
                 # Step from AOS to LOS in 100 second intervals
                 delta = timedelta(seconds=100)
                 deltatime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
@@ -395,12 +416,13 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 print "SETTING TIME", datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")
 
                 while deltatime < datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S"):
-
+                    print "delta time is less than satellite LOS time"
                     sat.compute(deltatime)
+                   
                     geotrack.append({'lat2': sat.sublat.real*(180/math.pi), \
                                      'lon2': sat.sublong.real*(180/math.pi), \
                                      'alt2': orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]*1000})
-
+                                        
                     eastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+90
                     westaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+270
 
@@ -414,6 +436,8 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                         swath = 2399000/2
                     if tle[0] == "SUOMI NPP":
                         swath = 2200000/2
+                    else:
+                        swath = 14000/2
 
                     geoeastpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, eastaz, swath))
                     geowestpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, westaz, swath))
@@ -421,17 +445,20 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     deltatime = deltatime+delta
 
                 # Create current location ogr output
+                                
                 nowpoint = [{'lat2':orb.get_lonlatalt(datetime.utcnow())[1],'lon2':orb.get_lonlatalt(datetime.utcnow())[0],'alt2':orb.get_lonlatalt(datetime.utcnow())[2]*1000}]
+                               
                 #TODO ensure the now attributes are actually attributes for the current position of the satellite and include relevant next pass information...tricky?
                 #if ((attributes['Orbit']==orb.get_orbit_number(datetime.utcnow()))and(AOStime<now)):
                 now_attributes = {'Satellite name': satname, 'Orbit height': orb.get_lonlatalt(datetime.utcnow())[2], 'Orbit': orb.get_orbit_number(datetime.utcnow()), \
                           'Current time': str(now),'Minutes to horizon': "N/A", 'AOS time': "N/A", \
                           'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
                     #now_attributes=attributes
+                
                 CURRENT_POSITION_FILENAME = os.path.join(output_path,satname+"_current_position.kml")
 
                 #TODO draw the current orbit forward for the passes period time from the satellite position as a long stepped ogr line
-
+                print now_attributes,nowpoint
                 getVectorFile(now_attributes,nowpoint,'point', CURRENT_POSITION_FILENAME, 'KML')
 
                 polypoints = []
@@ -487,6 +514,8 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                         tkswath = 1100000/2
                     if tle[0] == "SUOMI NPP":
                         tkswath = 2200000/2
+                    else:
+                        tkswath = 14000/2
                     tkgeoeastpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, tkeastaz, tkswath))
                     tkgeowestpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, tkwestaz, tkswath))
 
@@ -609,8 +638,13 @@ if __name__ == '__main__':
     tles = get_tles()
     # Loop through satellite list and execute until end of period
 
-    satellites = ("LANDSAT 8", "LANDSAT 7", "TERRA", "AQUA", "NOAA 15", "NOAA 18", "NOAA 19", "SUOMI NPP")
+    satellites = ("LANDSAT 7", "TERRA", "AQUA", "NOAA 15", "NOAA 18", "NOAA 19", "SUOMI NPP")
+    #TODO FLOCKS look to be acquiring on ascending pass but the code labels this descending - a
+    #TODO Add support for off nadir acquisitions i.e. standard off nadir Sentinel1
+    #satellites = ('SENTINEL-1A','FLOCK 1B-24','FLOCK 1B-23','FLOCK 1B-26','FLOCK 1B-25','FLOCK 1B-15','FLOCK 1B-16','FLOCK 1B-1','FLOCK 1B-2','FLOCK 1B-8','FLOCK 1B-7','FLOCK 1B-18','FLOCK 1B-17')
+
     while 1:
         for i in satellites:
+            print "Looking for ",i
             getUpcomingPasses(i,tles,datetime.utcnow(),period)
 
