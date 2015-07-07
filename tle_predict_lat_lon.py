@@ -1,9 +1,18 @@
+
+#----------------------------------------------------------------------------------
+#
+# Satellite Foot Print code
+# Rev:     June 1, 2014
+#
+#----------------------------------------------------------------------------------
+
 from datetime import timedelta, datetime
 import ephem
 import math
 import os
 import sys
 import time
+
 #import urllib2
 #import logging
 import wget
@@ -14,18 +23,67 @@ import osgeo.ogr
 import osgeo.osr
 from osgeo import ogr
 from osgeo import gdal
+
+#----------------------------------------------------------------------------------
+# numpy is not used in this cidei
+# It has been temporarily commneted
+#----------------------------------------------------------------------------------
+
 import numpy
-import shutil
-import HTML
 
-#PyKML gumpf
-#import lxml
-#from lxml import etree
-#import pykml
+#----------------------------------------------------------------------------------
 
+#----------------------------------------------------------------------------------
+#   Global Variable and satellite footprint parameters 
+#----------------------------------------------------------------------------------
+
+DATA_IN_DIR = "../data/"
+OUTPUT_DIR  = "../output/"
+LOGS_DIR    = "../logs/"
+
+scp_parameters = "scp_parameters.txt"
+scp_log        = "scp_log.txt"
+
+orbit_parameters ="orbit_parameters.txt"
+
+FL_ORB = open(OUTPUT_DIR+orbit_parameters,'a')
+
+file_parameters = DATA_IN_DIR + scp_parameters
+
+LAT_PARAMETERS =''
+LONG_PARAMATERS=''
+
+GRAVITATIONAL_CONST=0.0
+RADIUS_OF_EARTH=0
+GROUND_STATION=''
+
+WO = 0.0
+
+
+DELTA_TIME_STEP  = 100 #seconds
+SLEEP_STATUS     = 1   # how many minutes to sleep between status updates
+
+SCHEDULE         = []
+SATELLITE_SWATH  = []
+PROCESSED_ORBITS = []
+
+#----------------------------------------------------------------------------------
+# Satellite AOS and LOS window
+#----------------------------------------------------------------------------------
+
+SAT_AOS_WIN	 = []
+#SAT_INTF_LIST    = ["AQUA","TERRA","NOAA_19","SUOMI_NPP"]
+SAT_INTF_LIST    = ["NOAA_19","SUOMI_NPP"]
+#SAT_INTF_LIST    = ["AQUA","TERRA"]
+
+#----------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------
 
 # Check for correct usage
-if len(sys.argv)<3:
+
+# print len(sys.argv)
+
+if len(sys.argv)<2:
     print "*--------------------------------------------------------------------*"
     print ""
     print " tle_predict_lat_lon.py computes current position, observer track,    "
@@ -33,25 +91,202 @@ if len(sys.argv)<3:
     print ""
     print "*--------------------------------------------------------------------*"
     print ""
-    print " usage: tle_predict_lat_lon.py <period to predict(mins)> <output path> "
+    print " usage: tle_predict_lat_lon.py <period to predict(mins)> "
     print ""
     print "*--------------------------------------------------------------------*"
-    sys.exit()
 
 # Read arguments
 
-ground_station = ('-23 42', '133 54')   # Alice Spring Data Acquisition Facility
 period = int(sys.argv[1])  # Generate passes for this time period from start time
-output_path = sys.argv[2]
+
+if len(sys.argv) == 2:
+    output_path=OUTPUT_DIR
+else:
+    output_path = sys.argv[2]
+
 if not os.path.exists(output_path):
     print "OUTPUT PATH DOESN'T EXIST",output_path
     sys.exit()
-sleep_status = 1   # how many minutes to sleep between status updates
-schedule = []
+
+
+#----------------------------------------------------------------------------------
+# This routine is for testing Azimith and elevation calculations test
+#----------------------------------------------------------------------------------
+
+def test_az_el_cal(orb,observer,rt, ra, tt, ta, st, sa, sat_ht):
+	print 'Earth Station  Observer long       = ',observer.long
+	print 'Earth Station Observer lat         = ',observer.lat
+	print '-------------------get_obser_look method starts ------------------------------------------'
+	(Azm, Ele) = orb.get_observer_look(datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S"), 133.9, -23.7,0.545)
+	print 'Transit  Time          = ',datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S")
+	print "Transit  Azimith       = ",Azm
+	print "Transit  Elevation     = ",Ele
+	print "------------------ get_observer look finishes -----------------------------------"
+		
+#		(Azm, Ele) = orb.get_observer_look(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"), 133.0*3/142857/180,-23.0*3.142857/180,0)
+#		print 'Start Time          = ',datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S")
+#		print "Start Azimith       = ",Azm
+#		print "Start Elevation     = ",Ele
+		
+#		(Azm, Ele) = orb.get_observer_look(datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S"), observer.long, observer.lat,576)
+#		print 'End Time  = ',datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S")
+#		print "End Azimith       = ",Azm
+#		print "End Elevation     = ",Ele
+
+	(lon,lat,alt) = orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))
+	print 'Sat lon  = ', lon
+	print 'sat lat  = ', lat
+	print 'Sat alt  = ', alt
+	(az,el) = get_site_antenna_az_el(133.9, -23.7, lon, lat,sat_ht)
+	print 'Satellite starting az = ',az
+	print 'Satellite starting el = ',el
+
+	(lon,lat,alt) = orb.get_lonlatalt(datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S"))
+	print 'Sat lon  = ', lon
+	print 'Sat lat  = ', lat
+	print 'Sat alt  = ', alt
+	(az,el) = get_site_antenna_az_el(133.9, -23.7, lon, lat, sat_ht)
+	print 'Satellite Ending az = ',az
+	print 'Satellite Ending el = ',el
+	print 'alt  = ', alt
+	print '----------------------------------------------------------'
+
+	
+
+
+	return
+
+#----------------------------------------------------------------------------------
+# Computing Azimiht and Elevation angles t ground station, 
+# using longitude, latitude parematers of satellite and earth station
+#----------------------------------------------------------------------------------
+
+def get_site_antenna_az_el(site_lon, site_lat, sat_lon, sat_lat, sat_ht):
+	
+	rad_site_lon = math.radians(site_lon)
+	rad_site_lat = math.radians(site_lat)
+	rad_sat_lon  = math.radians(sat_lon)
+	rad_sat_lat  = math.radians(sat_lat)
+	rad_g	     = math.radians(site_lon - sat_lon)
+
+	a =  math.cos(rad_g)
+	b =  math.cos(rad_site_lat)
+	
+
+#	el = math.atan((a * b - 0.1512)/ \
+	el = math.atan((a * b - RADIUS_OF_EARTH/(RADIUS_OF_EARTH + sat_ht))/ \
+		math.sqrt(1 - (a*a)*(b*b)))
+
+	el = math.degrees(el)
+
+	az = math.radians(180) + math.atan(math.tan(rad_g)/math.sin(rad_site_lat))
+	az = math.degrees(az)	
+
+	return (az,el)
+
+#----------------------------------------------------------------------------------
 # Earth parameters for heading calculations
-one_on_f = 298.257223563          # Inverse flattening 1/f = 298.257223563
-f = 1/one_on_f                    # flattening
-r = 6378137
+#----------------------------------------------------------------------------------
+
+def get_parameters():
+
+    global GRAVITATIONAL_CONST
+    global RADIUS_OF_EARTH
+    global LONG_PARAMATERS
+    global LAT_PARAMETERS
+    global WO
+
+    fl = open(file_parameters)
+    count = 0
+    for item in fl:
+	data_str = []
+	if  item[0] <> "#" and len(item) > 5:
+		if count == 0:
+			data_str = (item.strip()).split(',')
+			LAT_PARAMETERS=data_str[0]
+			LONG_PARAMATERS=data_str[1]
+		if count == 1:
+			data_str = (item.strip()).split(',')
+			GRAVITATIONAL_CONST = float(data_str[0])
+			RADIUS_OF_EARTH = float(data_str[1])	
+		if count == 2:
+			WO = float(item)
+		if count >= 3:
+			SATELLITE_SWATH.append(item.strip())
+		       	
+		count += 1
+    fl.close()
+
+    return
+
+
+def get_time_secs(dt_str):
+
+	str1 = dt_str.split(' ')
+	dstr = str1[0].split('/')
+	tstr = str1[1].split(':')
+	
+	tsec = datetime(int(dstr[0]),int(dstr[1]),int(dstr[2]),\
+		    int(tstr[0]),int(tstr[1]),int(tstr[2])).strftime('%s')
+	return str(tsec)
+
+
+def set_parameters():
+
+    global GROUND_STATION
+
+    GROUND_STATION = (LAT_PARAMETERS, LONG_PARAMATERS)   # Alice Spring Data Acquisition Facility
+
+    return	
+
+def output_orbit_parameters(orbit_x):
+
+	if not ( orbit_x['Orbit'] in PROCESSED_ORBITS ):
+		PROCESSED_ORBITS.append(orbit_x['Orbit'])
+#		print orbit_x
+		print
+		print 'Satellite Name                                  = ', orbit_x['Satellite name']
+		print 'Orbit Number                                    = ', orbit_x['Orbit']
+		print 'Transit Time UTC                                = ', orbit_x['Transit time'],' Epoch(Secs) : ',get_time_secs(orbit_x['Transit time'])
+		print 'Node                                            = ', orbit_x['Node']
+		print 'Orbit Height                                    = ', orbit_x['Orbit height']
+		print 'AOS ( Aquisition of Signal ) UTC                = ', orbit_x['AOS time'],' Epoch(Secs) : ',get_time_secs(orbit_x['AOS time'])
+		print 'LOS time  ( Loss of Signal ) UTC                = ', orbit_x['LOS time'],' Epoch(Secs) : ',get_time_secs(orbit_x['LOS time'])
+		print 'Data Aquisition at Ground Station ( Secs )      = ', \
+			( int(get_time_secs(orbit_x['LOS time'])) - int(get_time_secs(orbit_x['AOS time'])) )
+		print 'Current UTC Time                                = ', orbit_x['Current time']
+		print 'Minutes to Horizon                              = ', orbit_x['Minutes to horizon']
+		
+		orb_str = orbit_x['Transit time'] + ',' + \
+			  orbit_x['Node'] + ',' + \
+			  orbit_x['AOS time'] + ',' + \
+			  orbit_x['Current time']+ ',' + \
+			  orbit_x['Satellite name']  + ',' + \
+			  str(orbit_x['Minutes to horizon'])  + ',' + \
+			  orbit_x['LOS time']  + ',' + \
+			  str(orbit_x['Orbit height']) + ',' + \
+			  str(orbit_x['Orbit']) + '\n' 
+		FL_ORB.write(orb_str)
+
+#----------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------
+#	Updating AQUA and NOAAA 91 List
+#----------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------
+
+		if any(orbit_x['Satellite name'] in s for s in SAT_INTF_LIST):
+			str1 = get_time_secs(orbit_x['AOS time']) + ' : ' + get_time_secs(orbit_x['LOS time']) + \
+                                ' : ' + str(orbit_x['Orbit']) + ' : ' + get_time_secs(orbit_x['AOS time']) + ' : ' + \
+                                str( int(get_time_secs(orbit_x['LOS time'])) - int(get_time_secs(orbit_x['AOS time'])) ) + \
+                                ' : ' + orbit_x['Satellite name']
+			SAT_AOS_WIN.append(str1.strip())
+			
+		
+
+	
+#	print orbit_x
+	return
+
 
 def get_tles():
 
@@ -59,53 +294,34 @@ def get_tles():
     # GetTLEs(): returns a list of tuples of kepler parameters for each satellite.
     resource = 'http://www.celestrak.com/norad/elements/resource.txt'
     weather = 'http://www.celestrak.com/norad/elements/weather.txt'
-    # Dove constellations    
-    planetlabs = 'http://www.celestrak.com/NORAD/elements/stations.txt'
     try:
-	os.remove('resource.txt')
+        os.remove('resource.txt')
     except OSError:
-	pass
+        pass
     try:
         os.remove('weather.txt')
-    except OSError:
-        pass
-    try:
-        os.remove('stations.txt')
+
     except OSError:
         pass
 
-    try:
-        
-        wget.download(resource)
-    except OSError:
-        print "COULD NOT DOWNLOAD resource.txt"
-        return ()
-    try:
-        
-        wget.download(weather)
-    except OSError:
-        print "COULD NOT DOWNLOAD weather.txt"
-        return ()
-    try:
- 
-        wget.download(planetlabs)
-    except OSError:
-        print "COULD NOT DOWNLOAD stations.txt"
-        return ()
+    wget.download(resource)
+    wget.download(weather)
+    print  '\n Download Finished'
 
+    cmd = 'mv ' + 'resource.txt' + ' ' + DATA_IN_DIR+'resource.txt'
+    os.system(cmd)
+    cmd = 'mv ' + 'weather.txt' + ' ' + DATA_IN_DIR+'weather.txt'
+    os.system(cmd)
 
-
-
-    file_names = ['weather.txt', 'resource.txt', 'stations.txt']
-    with open('tles.txt', 'w') as outfile:
+    file_names = [DATA_IN_DIR+'weather.txt', DATA_IN_DIR+'resource.txt']
+    with open(DATA_IN_DIR+'tles.txt', 'w') as outfile:
         for fname in file_names:
             with open(fname) as infile:
                 for line in infile:
                     outfile.write(line)
 
-    tles = open('tles.txt', 'r').readlines()
+    tles = open(DATA_IN_DIR+'tles.txt', 'r').readlines()
 
-    print "retrieving TLE file.........."
     # strip off the header tokens and newlines
     tles = [item.strip() for item in tles]
 
@@ -262,17 +478,20 @@ def replace_string_in_file(infile,text_to_find,text_to_insert):
 
 
     in_file = open(infile, 'r')
-    temporary = open(os.path.join(output_path,'tmp.txt'), 'w')
+    temporary = open('tmp.txt', 'w')
     for line in in_file:
         temporary.write(line.replace(text_to_find, text_to_insert))
     in_file.close()
     temporary.close()
     os.remove(infile)
-    shutil.move(os.path.join(output_path,'tmp.txt'),infile)
+    os.rename('tmp.txt',infile)
+
     return ()
 
 
 def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius, daily_revolutions):
+
+    #print "RADius",orbit_radius
 
     lat_rad = math.radians(latitude)  # Latitude in radians
     oi_rad = math.radians(oi_deg)   # Orbital Inclination (OI) [radians]
@@ -284,11 +503,16 @@ def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius
 
     #TODO put earth parameters into a dict and add support for other spheroids GRS1980 etc.
     # Earth Stuff (WGS84)
-    one_on_f = 298.257223563          # Inverse flattening 1/f = 298.257223563
+
+    one_on_f = GRAVITATIONAL_CONST     # Inverse flattening 1/f = 298.257223563
+
     f = 1/one_on_f                    # flattening
-    r = 6378137                     # Radius (a) [m] =	 6378137
+
+    r = RADIUS_OF_EARTH	
+
     e = 1-math.pow((1-1/one_on_f), 2)  # Eccentricity (e^2) = 0.00669438 =1-(1-1/I5)^2
-    wO = 0.000072722052             # rotation (w0) [rad/sec] = 7.2722052E-05
+
+#    WO = 0.000072722052             # rotation (w0) [rad/sec] = 7.2722052E-05
 
     xfac = math.sqrt(1-e*(2-e)*(math.pow(math.sin(math.radians(latitude)), 2)))
     phi_rad = math.asin((1-e)*math.sin(math.radians(latitude))/xfac)  # Phi0' (Geocentric latitude)
@@ -300,165 +524,176 @@ def getEffectiveHeading(satellite, oi_deg, latitude, longitude, tle_orbit_radius
     xn = n*xfac  #  Xn
     altitude = (orbit_radius-xn)/1000  # altitude
     altitude_ = (orbit_radius*math.cos(altphi_rad/180*math.pi)/math.cos(lat_rad)-n)/1000
-    rotation = math.atan((wO*math.cos(phi_rad)*math.cos(beta*math.pi/180))/(av+wO*math.cos(phi_rad)*math.sin(beta*math.pi/180)))*180/math.pi
+    rotation = math.atan((WO*math.cos(phi_rad)*math.cos(beta*math.pi/180))/(av+WO*math.cos(phi_rad)*math.sin(beta*math.pi/180)))*180/math.pi
     eh = beta+rotation
     alpha12 = eh
     s = 0.5*185000  # s = distance in metres
     effective_heading = alpha12
     return effective_heading
 
-def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes_period):
+def getUpcomingPasses(satellite_name,satellite_swath,tle_information, passes_begin_time, passes_period):
 
 
-    observer = ephem.Observer()
-    observer.lat = ground_station[0]
-    observer.long = ground_station[1]
-    observer.horizon = '5:0'
+    observer       = ephem.Observer()
+    observer.lat   = GROUND_STATION[0]
+    observer.long  = GROUND_STATION[1]
     #updatetime = 0
     period = passes_period
     #Get most recent TLE for determining upcoming passes from now
     tles = tle_information
 
     # make a list of dicts to hold the upcoming pass information for the selected satellites
-    schedule = []
+    SCHEDULE = []
     observer.date = passes_begin_time
 
     while 1:
 
-        print "---------------------------------------"
         for tle in tles:
-            
-            if tle[0] == satellite_name:
-                #print tle
+
+            if tle[0].strip()== satellite_name:
+
                 #TODO clean up the use of pyephem versus orbital. Orbital can give a orbit number and does many of the pyephem functions
                 #TODO add the individual acquisitions as layers in the same ogr output
                 #TODO use an appropriate google earth icon for satellites at a visible display resolution with a name tag and minutesaway
                 #TODO print output to logging
                 satname = str(tle[0]).replace(" ","_")
-                # Flock has minus in filename but looks like KML creater doesn't like it                
-                satname = satname.replace("-","_")
-                #print satname
-                
                 sat = ephem.readtle(tle[0],tle[1],tle[2])
 
-
-                twole = tlefile.read(tle[0],'tles.txt')
+                twole = tlefile.read(tle[0],DATA_IN_DIR+'tles.txt')
                 now = datetime.utcnow()
                 #TODO check age of TLE - if older than x days get_tle()
-                print "TLE EPOCH:",twole.epoch
-                #if twole.epoch < now - timedelta(days=5):
-                #    get_tles()
-                #    satname = str(tle[0]).replace(" ","_")
-                #    sat = ephem.readtle(tle[0],tle[1],tle[2])
-                #    twole = tlefile.read(tle[0],'tles.txt')
-
-                print "---------------------------------------"
-                print tle[0]
-
+#                print "TLE EPOCH:",twole.epoch
+                
                 oi = float(str.split(tle[2],' ')[3])
-                #orb = Orbital(tle[0])
-                orb = Orbital(tle[0],"tles.txt", tle[1],tle[2])
+                orb = Orbital(tle[0])
                 attributes = []
-
                 rt, ra, tt, ta, st, sa = observer.next_pass(sat)
-                
+
                 # Determine is pass descending or ascending
-                # Confirm that observer details have been computed i.e. are not 'Null'
-		
-		if rt is None:
-		    return ()
-		sat.compute(rt)
+                sat.compute(rt)
                 aos_lat = sat.sublat.real*(180/math.pi)
-                
-		sat.compute(st)
+                sat.compute(st)
                 los_lat = sat.sublat.real*(180/math.pi)
 
                 if (aos_lat > los_lat):
-                    print "PASS                 = descending"
+#                    print "PASS                 = descending"
                     node = "descending"
                 else:
-                    print "PASS                 = ascending"
+#                    print "PASS                 = ascending"
                     node = "ascending"
                     oi = 360 - oi
 
                 AOStime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
-                minutesaway = ((AOStime-now).seconds/60.0)+((AOStime-now).days*1440.0)
+                minutesaway = (AOStime-now).seconds/60.0
 
-                print "Minutes to horizon   = ", minutesaway
-                print "AOStime              = ", rt
-                print "LOStime              = ", st
-                print "Transit time         = ", tt
+#		print "Satellie             = ", satname
+#               print "Minutes to horizon   = ", minutesaway
+#               print "AOStime              = ", rt
+#               print "LOStime              = ", st
+#               print "Transit time         = ", tt
+#	-----------------------------------------------------------------------------
+#		This is a test routine for calculating Az, El angles
+#	-----------------------------------------------------------------------------
+
+
 
                 orad = orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]
-                
-		# Create swath footprint ogr output
-                SWATH_FILENAME = os.path.join(output_path,satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml")
+
+#               print '&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&'
+		test_az_el_cal(orb,observer, rt, ra, tt, ta, st, sa,orad)
+#               print '&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&'
+
+
+
+#		
                 attributes = {'Satellite name': satname, 'Orbit height': orad, 'Orbit': orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")), \
+#                attributes = {'Satellite name': satname, 'Orbit height': orad, 'Orbit': orb.get_orbit_number(datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S")), \
                               'Current time': str(now),'Minutes to horizon': minutesaway, 'AOS time': str(rt), \
-                              'LOS time': str(st), 'Transit time': str(tt), 'Node': node, \
-			      'SWATH_FILENAME': (satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_swath.kml"),'ORBIT_FILENAME': (satname+"."+str(orb.get_orbit_number(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S")))+".ALICE.orbit_track.kml")}
+                              'LOS time': str(st), 'Transit time': str(tt), 'Node': node}
 
                 # Append the attributes to the list of acquisitions for the acquisition period
-                if not any ((x['Satellite name'] == satname and x['Orbit'] == orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")))for x in schedule):
-                    schedule.append(attributes)
-                
-                
-                # Step from AOS to LOS in 100 second intervals
-                delta = timedelta(seconds=100)
-                deltatime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
+                if not any ((x['Satellite name'] == satname and x['Orbit'] == orb.get_orbit_number(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")))for x in SCHEDULE):
+#                if not any ((x['Satellite name'] == satname and x['Orbit'] == orb.get_orbit_number(datetime.strptime(str(tt), "%Y/%m/%d %H:%M:%S")))for x in SCHEDULE):
+                    SCHEDULE.append(attributes)
 
+                # Step from AOS to LOS in 100 second intervals
+#                delta = timedelta(seconds=100)
+                delta = timedelta(seconds=DELTA_TIME_STEP)
+                deltatime = datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S")
                 geoeastpoint = []
                 geowestpoint = []
                 geotrack = []
 
 
-                print "DELTATIME", deltatime
-                print "SETTING TIME", datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")
+#                print "DELTATIME", deltatime
+#                print "SETTING TIME", datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")
+
+
+#		Tesing for next satellite
+
+
+
+#	--------------------------------------------------------------------------------------------
+#	--------------------------------------------------------------------------------------------
+#		The following set of lines have been for testing while making comparision in seconds 
+#		instead of string comparisiom
+#	--------------------------------------------------------------------------------------------
+#	--------------------------------------------------------------------------------------------
+
+#		print '================ Testing Loop starts ==========================================='
+#		print 'deltatime       = ',deltatime
+#		print 'Secs Time       = ', get_time_secs(str(deltatime).replace("-","/"))
+#		print 'st              = ',str(datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S"))
+#		print 'st in Secs Time = ',get_time_secs(str(datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")).replace('-','/'))
+#		print '================ Testing Loop Ends   ==========================================='
+#		The following if statement has ben included on the basis of dpoch seconds
+#
+
+		if get_time_secs(str(deltatime).replace("-","/")) >= \
+			get_time_secs(str(datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")).replace('-','/')):
+			return()
+
+		print 'Delta Time = ',deltatime
+		print 'date time  = ',datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S")		
+		print '---------------------------'
+
+#		if deltatime >= datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S"):
+#			return()
 
                 while deltatime < datetime.strptime(str(st), "%Y/%m/%d %H:%M:%S"):
-                    print "delta time is less than satellite LOS time"
+
                     sat.compute(deltatime)
-                   
                     geotrack.append({'lat2': sat.sublat.real*(180/math.pi), \
                                      'lon2': sat.sublong.real*(180/math.pi), \
                                      'alt2': orb.get_lonlatalt(datetime.strptime(str(rt), "%Y/%m/%d %H:%M:%S"))[2]*1000})
-                                        
+
                     eastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+90
                     westaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi), orad, sat._n)+270
 
                     #Set ground swath per satellite sensor
                     #TODO use view angle check to refine step from satellite track see IFOV
-                    if tle[0] in ("LANDSAT 8","LANDSAT 7"):
-                        swath = 185000/2
-                    if tle[0] in ("TERRA","AQUA"):
-                        swath = 2330000/2
-                    if tle[0] in ("NOAA 15", "NOAA 18", "NOAA 19"):
-                        swath = 2399000/2
-                    if tle[0] == "SUOMI NPP":
-                        swath = 2200000/2
-                    else:
-                        swath = 14000/2
-
+                    
+		    swath = float(satellite_swath)/2.
+		    
                     geoeastpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, eastaz, swath))
                     geowestpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, westaz, swath))
 
                     deltatime = deltatime+delta
 
                 # Create current location ogr output
-                                
                 nowpoint = [{'lat2':orb.get_lonlatalt(datetime.utcnow())[1],'lon2':orb.get_lonlatalt(datetime.utcnow())[0],'alt2':orb.get_lonlatalt(datetime.utcnow())[2]*1000}]
-                               
                 #TODO ensure the now attributes are actually attributes for the current position of the satellite and include relevant next pass information...tricky?
                 #if ((attributes['Orbit']==orb.get_orbit_number(datetime.utcnow()))and(AOStime<now)):
                 now_attributes = {'Satellite name': satname, 'Orbit height': orb.get_lonlatalt(datetime.utcnow())[2], 'Orbit': orb.get_orbit_number(datetime.utcnow()), \
                           'Current time': str(now),'Minutes to horizon': "N/A", 'AOS time': "N/A", \
                           'LOS time': "N/A", 'Transit time': "N/A", 'Node': "N/A"}
                     #now_attributes=attributes
-                
-                CURRENT_POSITION_FILENAME = os.path.join(output_path,satname+"_current_position.kml")
+                #CURRENT_POSITION_FILENAME = satname+"_current_position.kml"
+
+                CURRENT_POSITION_FILENAME = OUTPUT_DIR+satname+"_current_position.kml"
 
                 #TODO draw the current orbit forward for the passes period time from the satellite position as a long stepped ogr line
-                print now_attributes,nowpoint
+
                 getVectorFile(now_attributes,nowpoint,'point', CURRENT_POSITION_FILENAME, 'KML')
 
                 polypoints = []
@@ -479,26 +714,20 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 #TODO def this
                 # Step from AOS to current time second intervals
 
-                observer.date=now
+                observer.date=datetime.utcnow()
                 sat.compute(observer)
-                tkdelta = timedelta(seconds=100)
-                #TODO Problem determining rise time if rise time has passed and set time not yet reached
-		#solution may be to replace rt with now if rt > st
-		tkrt, tkra, tktt, tkta, tkst, tksa = observer.next_pass(sat)
-		print tkrt, tkra, tktt, tkta, tkst, tksa
-		if tkrt is None:
-		    return ()		
-		#if datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S") > datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"):
-		#    tkrt = datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S") - datetime.strptime(str(tktt),"%Y/%m/%d %H:%M:%S")
-                #    tkrt = str(tkt),"%Y/%m/%d %H:%M:%S"
-		#print "NOW: ",now," TKRT: ",datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")," TKST: ",datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")
-		tkdeltatime = datetime.utcnow()
+
+#               tkdelta = timedelta(seconds=100)
+
+                tkdelta = timedelta(seconds=DELTA_TIME_STEP)
+
+                tkrt, tkra, tktt, tkta, tkst, tksa = observer.next_pass(sat)
+                tkdeltatime = datetime.utcnow()
                 tkgeoeastpoint = []
                 tkgeowestpoint = []
                 tkgeotrack = []
 
-                #while tkdeltatime < (datetime.utcnow() or datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
-		while (tkdeltatime < datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
+                while tkdeltatime < (datetime.utcnow() or datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")):
 
                     sat.compute(tkdeltatime)
                     tkgeotrack.append({'lat2':sat.sublat.real*(180/math.pi),'lon2':sat.sublong.real*(180/math.pi),'alt2':orb.get_lonlatalt(datetime.strptime(str(rt),"%Y/%m/%d %H:%M:%S"))[2]})
@@ -506,16 +735,9 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                     tkeastaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad,sat._n)+90
                     tkwestaz = getEffectiveHeading(sat,oi,sat.sublat.real*(180/math.pi), sat.sublong.real*(180/math.pi),orad,sat._n)+270
                     #TODO use view angle check to refine step from satellite track see IFOV
-                    if tle[0] in ("LANDSAT 8","LANDSAT 7"):
-                        tkswath = 185000/2
-                    if tle[0] in ("TERRA","AQUA"):
-                        tkswath = 2330000/2
-                    if tle[0] in ("NOAA 15", "NOAA 18", "NOAA 19"):
-                        tkswath = 1100000/2
-                    if tle[0] == "SUOMI NPP":
-                        tkswath = 2200000/2
-                    else:
-                        tkswath = 14000/2
+
+		    tkswath = float(satellite_swath)/2.
+		    
                     tkgeoeastpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, tkeastaz, tkswath))
                     tkgeowestpoint.append(Geodesic.WGS84.Direct(sat.sublat.real*180/math.pi, sat.sublong.real*180/math.pi, tkwestaz, tkswath))
 
@@ -530,121 +752,112 @@ def getUpcomingPasses(satellite_name, tle_information, passes_begin_time, passes
                 if len(tkpolypoints)>0:
                     tkpolypoints.append({'lat2':tkgeowestpoint[0]['lat2'],'lon2':tkgeowestpoint[0]['lon2']})
 
-                    #if not ((attributes['Node']=="ascending")and(satname not in ("AQUA"))):
-                    if (((attributes['Node']=="ascending")and(satname in ("AQUA","SUOMI_NPP")))or ((attributes['Node']=="descending")and(satname not in ("AQUA","SUOMI_NPP")))): 
-   			# Create swath ogr output
-                    	getVectorFile(attributes,polypoints,'polygon', SWATH_FILENAME, 'KML')
-                    	# Create orbit track ogr output
-                    	getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
-                    	# Create currently acquiring ogr output
-			#print "NOW: ",now," TKRT: ",datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")," TKST: ",datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")
-                    	#if ((datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")>now) and (datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S")<now)):
-			if tkrt > tkst:
-			    print "Executing tracking swath creation - tkpolypoints = ",tkpolypoints
-                       	    getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
+                if not ((attributes['Node']=="ascending")and(satname not in ("AQUA"))):
+                    # Create swath ogr output
+                    getVectorFile(attributes,polypoints,'polygon', SWATH_FILENAME, 'KML')
+                    # Create orbit track ogr output
+                    getVectorFile(attributes,geotrack,'line', ORBIT_FILENAME, 'KML')
+                    # Create currently acquiring ogr output
+                    if ((now >= datetime.strptime(str(tkrt),"%Y/%m/%d %H:%M:%S")) and (now <= datetime.strptime(str(tkst),"%Y/%m/%d %H:%M:%S"))):
+                        getVectorFile(now_attributes,tkpolypoints,'polygon', TRACKING_SWATH_FILENAME, 'KML')
 
-
-
-
-		baseline=1
                 if minutesaway <= period:
 
-                    print "---------------------------------------"
-                    print tle[0], 'WILL BE MAKING A PASS IN ', minutesaway, " MINUTES"
-                    print ' Rise Azimuth: ', ra
-                    print ' Transit Time: ', tt
-                    print ' Transit Altitude: ', ta
-                    print ' Set Time: ', st
-                    print ' Set Azimuth: ', sa
-
-                    for x in sorted(schedule, key=lambda k: k['AOS time']):
-                        print x
-			
+#                    print tle[0], 'WILL BE MAKING A PASS IN ', minutesaway, " MINUTES"
+#                    print ' Rise Azimuth: ', ra
+#                    print ' Transit Time: ', tt
+#                    print ' Transit Altitude: ', ta
+#                    print ' Set Time: ', st
+#                    print ' Set Azimuth: ', sa
+#                    print '================================================='
+#		    print 'Satellite Name = ',satellite_name
+                    for x in sorted(SCHEDULE, key=lambda k: k['AOS time']):
+#			print x
+			output_orbit_parameters(x)
                         # For dictionary entries with 'LOS time' older than now time - remove
                         if ((datetime.strptime(str(x['LOS time']),"%Y/%m/%d %H:%M:%S"))<(datetime.utcnow())):
                             # Delete output ogr
                             if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml")):
-                                shutil.move(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"),os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml.OUTOFDATE"))
+                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_swath.kml"))
                             if os.path.exists(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml")):
-                                shutil.move(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"),os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml.OUTOFDATE"))
-
+                                os.remove(os.path.join(output_path,satname+"."+str(x['Orbit'])+".ALICE.orbit_track.kml"))
                             # Delete dictionary entry for pass
-                            schedule.remove(x)
+                            SCHEDULE.remove(x)
 
-                    # Unlikely - if no entries in the schedule don't try to print it
-                    # see if there are any new additions to the schedule
-		    		    
-		    if len(schedule)>0:
-                        print (datetime.strptime(str(schedule[0]['AOS time']),"%Y/%m/%d %H:%M:%S"))
-			
+                    # Unlikely - if no entries in the SCHEDULE don't try to print it
+
+                    if len(SCHEDULE)>0:
+			print (datetime.strptime(str(SCHEDULE[0]['AOS time']),"%Y/%m/%d %H:%M:%S"))
+
                     # If the AOS time is less than now + the time delta, shift the time to the latest recorded pass LOS time
-                    if (len(schedule)>0 and ((datetime.strptime(str(schedule[len(schedule)-1]['AOS time']),"%Y/%m/%d %H:%M:%S")<(now+timedelta(minutes=period))))):
-    			observer.date = (datetime.strptime(str(schedule[len(schedule)-1]['LOS time']),"%Y/%m/%d %H:%M:%S")+timedelta(minutes=5))
 
+                    if ((datetime.strptime(str(SCHEDULE[len(SCHEDULE)-1]['AOS time']),"%Y/%m/%d %H:%M:%S")<(datetime.utcnow()+timedelta(minutes=period)))):
+                        observer.date = (datetime.strptime(str(SCHEDULE[len(SCHEDULE)-1]['LOS time']),"%Y/%m/%d %H:%M:%S")+timedelta(minutes=5))
                         # Recompute the satellite position for the update time
                         sat.compute(observer)
-                        print "MODIFIED OBSERVER DATE",observer.date
-
+#                        print "MODIFIED OBSERVER DATE",observer.date
                     else:
-                        print "--------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------"
+#                       print "--------NOTHING TO MODIFY MOVING TO NEXT SATELLITE IN LIST------"
                         #TODO - write to html
-                        # Exit the def if the schedule isn't able to update because there are no passes in the acquisition window
-			
-                        output_html = HTML.Table(schedule)
-                        t = HTML.Table(header_row=['Transit time', 'Node', 'AOS time', 'Current time', 'Satellite name', 'Minutes to horizon', 'LOS time', 'Orbit height', 'Orbit'])
-                        html_output = open(os.path.join(output_path,satname+".schedule.html"),'w')
-			html_output.write("<!DOCTYPE html>"+'\n')
-                        html_output.write("<html>"+'\n')
-                        html_output.write("<head>"+'\n')
-                        html_output.write('<meta http-equiv="refresh" content="5">'+'\n')
-                        html_output.write("<style>"+'\n')
-                        html_output.write("table,th,td"+'\n')
-                        html_output.write("{"+'\n')
-                        html_output.write("border:1px solid black;"+'\n')
-                        html_output.write("padding:15px;"+'\n')
-                        html_output.write("}"+'\n')
-                        html_output.write("</style>"+'\n')
-                        html_output.write("<body>"+'\n')
-                        html_output.write('<table style="width:300px">'+'\n')
 
-                        html_output.write("<tr>"+'\n')
-                        html_output.write("    <th>Satellite</th>"+'\n')
-                        html_output.write("    <th>Orbit</th>"+'\n')
-                        html_output.write("    <th>Node</th>"+'\n')
-                        html_output.write("    <th>AOS time</th>"+'\n')
-                        html_output.write("    <th>LOS time</th>"+'\n')
-                        html_output.write("    <th>Minutes to horizon</th>"+'\n')
-                        html_output.write("</tr>"+'\n')
-                        for x in sorted(schedule):
-                            if (((x['Node']=="ascending")and(x['Satellite name'] in ("AQUA","SUOMI_NPP"))) or ((x['Node']=="descending")and(x['Satellite name'] not in ("AQUA","SUOMI_NPP")))):
-				html_output.write("<tr>"+'\n')
-                            	html_output.write("    <td>"+str(x['Satellite name'])+"</td>"+'\n')
-                            	html_output.write('    <td><a href="'+str(x['SWATH_FILENAME'])+'">'+str(x['Orbit'])+"</a></td>"+'\n')
-                            	html_output.write('    <td><a href="'+str(x['ORBIT_FILENAME'])+'">'+str(x['Node'])+"</a></td>"+'\n')
-                            	html_output.write("    <td>"+str(x['AOS time'])+"</td>"+'\n')
-                            	html_output.write("    <td>"+str(x['LOS time'])+"</td>"+'\n')
-                            	html_output.write('    <td><a href="'+satname+"_current_position.kml"+'">'+str(x['Minutes to horizon'])+"</a></td>"+'\n')
-                            	html_output.write("</tr>"+'\n')
-                        html_output.write("</body>"+'\n')
-                        html_output.write("</html>"+'\n')
+                        # Exit the def if the SCHEDULE isn't able to update because there are no passes in the acquisition window
                         return ()
 
-                #    return ()
+#	print 'Before Time Sleep ......'
+#	print 'Loop for While .........'
+	print '============================================================================='
 
-        time.sleep(1*sleep_status)
+        time.sleep(1*SLEEP_STATUS)
     return ()
 
+def SAT_Interference():
+
+	print '='*130
+	SAT_AOS_WIN.sort()
+	for index in range(len(SAT_AOS_WIN)-1):
+
+		val1 = SAT_AOS_WIN[index].split(':')
+		val2 = SAT_AOS_WIN[index+1].split(':')
+		if val1[5].strip() == val2[5].strip():
+			continue
+		if ( ( int(val2[0].strip()) < int(val1[0].strip()) ) and \
+			( int(val2[0].strip()) > int(val1[1].strip()) ) ) or \
+			( ( int(val2[1].strip()) > int(val1[0].strip()) ) and \
+			( int(val2[1].strip()) < int(val1[1].strip()) ) ):
+				print '%36s'%' Orbit Interference Detected for ', '%9s'%val1[5].strip(),'%8s'%'Orbit : ',int(val1[2].strip()) \
+				, ' : AOS Time = ',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(val1[3]))) \
+				, ' : Earth station Data Collection Interval ',val1[4].rjust(4),' secs '
+				print '%36s'%' Orbit Interference Detected for ','%9s'%val2[5].strip(),'%8s'%'Orbit : ',int(val2[2].strip()) \
+				, ' : AOS Time = ',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(val2[3]))) \
+				, ' : Earth station Data Collection Interval ',val2[4].rjust(4),' secs '
+				print '='*130
+		else:
+				print '%36s'%' No Orbit Interference Detected for ','%9s'%val1[5].strip(),'%8s'%'Orbit : ',int(val1[2].strip()) \
+				, ' : AOS Time = ',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(val1[3]))) \
+				, ' : Earth station Data Collection Interval ',val1[4].rjust(4),' secs '
+				print '%36s'%' No Orbit Interference Detected for ','%9s'%val2[5].strip(),'%8s'%'Orbit : ',int(val2[2].strip()) \
+				, ' : AOS Time = ',time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(int(val2[3]))) \
+				, ' : Earth station Data Collection Interval ',val2[4].rjust(4),' secs '
+				print '='*130
+	
+			
 if __name__ == '__main__':
+
+    get_parameters()
+    set_parameters()
     tles = get_tles()
-    # Loop through satellite list and execute until end of period
 
-    satellites = ("LANDSAT 7", "TERRA", "AQUA", "NOAA 15", "NOAA 18", "NOAA 19", "SUOMI NPP")
-    #TODO FLOCKS look to be acquiring on ascending pass but the code labels this descending - a
-    #TODO Add support for off nadir acquisitions i.e. standard off nadir Sentinel1
-    #satellites = ('SENTINEL-1A','FLOCK 1B-24','FLOCK 1B-23','FLOCK 1B-26','FLOCK 1B-25','FLOCK 1B-15','FLOCK 1B-16','FLOCK 1B-1','FLOCK 1B-2','FLOCK 1B-8','FLOCK 1B-7','FLOCK 1B-18','FLOCK 1B-17')
+# Loop through satellite list and execute until end of period
 
-    while 1:
-        for i in satellites:
-            print "Looking for ",i
-            getUpcomingPasses(i,tles,datetime.utcnow(),period)
+# Commnented from the original code
+#    while 1:
+#        for item in SATELLITE_SWATH:
+#	    sl = item.split(',')
+#            getUpcomingPasses(sl[0],sl[1],tles,datetime.utcnow(),period)
+#	sys.exit()
+for item in SATELLITE_SWATH:
+	sl = item.split(',')
+	getUpcomingPasses(sl[0].strip(),sl[1].strip(),tles,datetime.utcnow(),period)
 
+
+SAT_Interference()
