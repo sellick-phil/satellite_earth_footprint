@@ -1,0 +1,30 @@
+id: 896605c4-9178-11e5-879d-ac162d791418
+ga_label: LS5_TM_STD-RCC_P00_L5TT1986227235010ASA111_0_0_19860815T235010Z19860815T235627
+ga_level: P00
+product_type: satellite_telemetry_data
+creation_dt: 2015-11-23 00:24:19.191972
+size_bytes: 3971638821
+checksum_path: package.sha1
+platform:
+    code: LANDSAT_5
+instrument:
+    name: TM
+    operation_mode: SAM
+format:
+    name: RCC
+    version: 0
+usgs:
+    interval_id: L5TT1986227235010ASA111
+acquisition:
+    aos: 1986-08-15 23:50:10
+    los: 1986-08-15 23:56:27
+    groundstation:
+        code: ASA
+        label: Alice Springs
+        eods_domain_code: '002'
+    platform_orbit: 13067
+image:
+    bands: {}
+lineage:
+    machine: {}
+    source_datasets: {}
